@@ -1,0 +1,9 @@
+# Application metrics arrive through remote write from the OTel Collector (see otel-collector.yaml),
+# so the only scrape target is Prometheus itself.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

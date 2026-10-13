@@ -1,0 +1,8 @@
+# Private subnet with outbound internet (NAT), in the VPC of the games (private_subnet_id output of their stack).
+subnet_id = "subnet-0123456789abcdef0"
+
+# Game hosts allowed to send OTLP (security_group_id output of each game's stack).
+allowed_client_security_group_ids = ["sg-0123456789abcdef0"]
+
+# Parameters each game's deploy reads; Terraform sets them to this stack's OTLP endpoint.
+otlp_endpoint_parameters = ["/coika/auth_service/app/OTEL_EXPORTER_OTLP_ENDPOINT"]

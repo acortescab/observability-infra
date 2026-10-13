@@ -1,0 +1,83 @@
+# Observability stack of the observability host. Start it with ./start.sh (loads the secrets from SSM and exports
+# them to compose). The API sends OTLP to the Collector, which fans out to Tempo / Prometheus / Loki.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.111.0
+    restart: unless-stopped
+    mem_limit: 384m   # above the Collector's own memory_limiter (256 MiB) so it throttles before the kernel kills it
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      # Only the private IP (set by start.sh); the security group limits it to the registered clients.
+      - "${OBS_BIND_IP:?run ./start.sh}:4317:4317"   # OTLP gRPC
+      - "${OBS_BIND_IP:?run ./start.sh}:4318:4318"   # OTLP HTTP
+    depends_on: [tempo, loki, prometheus]
+    logging: *logging
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    restart: unless-stopped
+    mem_limit: 768m
+    stop_grace_period: 60s   # time to flush the WAL when the host is stopped
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml:ro
+      - tempo_data:/var/tempo
+    logging: *logging
+
+  loki:
+    image: grafana/loki:3.2.0
+    restart: unless-stopped
+    mem_limit: 768m
+    stop_grace_period: 60s   # time to flush the WAL when the host is stopped
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./loki.yaml:/etc/loki/loki.yaml:ro
+      - loki_data:/loki
+    logging: *logging
+
+  prometheus:
+    image: prom/prometheus:v2.55.0
+    restart: unless-stopped
+    mem_limit: 1g
+    stop_grace_period: 60s   # time to flush the WAL when the host is stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver   # the Collector pushes metrics here
+      - --storage.tsdb.retention.time=15d
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      # Loopback only: queried on the host (SSM Run Command / port forwarding), never from the network.
+      - "127.0.0.1:9090:9090"
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    restart: unless-stopped
+    mem_limit: 384m
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?run ./start.sh}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./grafana-datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      # Loopback only: reach it with an SSM port-forwarding session (see the README).
+      - "127.0.0.1:3000:3000"
+    depends_on: [tempo, loki, prometheus]
+    logging: *logging
+
+volumes:
+  tempo_data:
+  loki_data:
+  prometheus_data:
+  grafana_data:

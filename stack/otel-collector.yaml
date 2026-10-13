@@ -1,0 +1,42 @@
+# OpenTelemetry Collector: single OTLP entry point; fans signals out to Tempo / Prometheus / Loki.
+# Apps only know this endpoint, so swapping a backend (e.g. Grafana Cloud) only touches the exporters below.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+  batch: {}
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    resource_to_telemetry_conversion:
+      enabled: true   # keeps service.name etc. as metric labels
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheusremotewrite]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/loki]
