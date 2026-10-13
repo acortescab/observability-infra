@@ -137,6 +137,7 @@ data "aws_iam_policy_document" "ci_apply" {
       "ssm:UpdateDocumentDefaultVersion",
       "ssm:DeleteDocument",
       "ssm:DescribeDocument",
+      "ssm:DescribeDocumentPermission",
       "ssm:GetDocument",
       "ssm:ListDocumentVersions",
       "ssm:AddTagsToResource",
@@ -346,7 +347,7 @@ data "aws_iam_policy_document" "ci_plan" {
 
   statement {
     sid       = "SsmDeployRead"
-    actions   = ["ssm:DescribeDocument", "ssm:GetDocument", "ssm:ListDocumentVersions", "ssm:ListTagsForResource"]
+    actions   = ["ssm:DescribeDocument", "ssm:DescribeDocumentPermission", "ssm:GetDocument", "ssm:ListDocumentVersions", "ssm:ListTagsForResource"]
     resources = [local.ci_ssm_document_arn]
   }
 
