@@ -8,6 +8,9 @@ Terraform for one shared observability host (prod only). Every game sends OpenTe
   Session Manager. Encrypted gp3 root disk plus a separate encrypted data disk, IMDSv2 required.
 - Its bootstrap installs `stack/` and runs, with docker compose under systemd (`observability-stack.service`):
   OpenTelemetry Collector, Prometheus (15 days), Loki (7 days), Tempo (7 days) and Grafana.
+- An S3 bucket (`telemetry_bucket_name`, `observability-telemetry-s3` by default) shared by Loki (`loki/`) and Tempo (`tempo/`): private,
+  encrypted, TLS only, `prevent_destroy`, and a lifecycle expiry (`telemetry_expiration_days`, 14) behind their 7-day
+  retention. The instance role can only read and write those two prefixes. Prometheus stays on the data volume.
 - A security group that only admits OTLP (4317 gRPC, 4318 HTTP) from the registered clients. Grafana (3000) and
   Prometheus (9090) listen on loopback of the host.
 - An instance role: Session Manager plus read access to `<ssm_prefix>/*`.
@@ -69,6 +72,13 @@ aws ssm start-session --target (terraform output -raw instance_id) --document-na
 - The instance is never replaced by a newer AMI or an edited bootstrap (`ignore_changes` on `ami` and `user_data`).
   To change a config, edit it under `/opt/observability` on the host, run `docker compose up -d` there, and mirror
   the change in `stack/`.
+- Loki chunks/index and Tempo blocks are in the telemetry bucket, not on the disk. `start.sh` reads the bucket name from
+  the SSM parameter `<ssm_prefix>/TELEMETRY_BUCKET`. The data volume still holds Prometheus, Grafana, the Loki index
+  in use and the Tempo WAL, so the daily snapshots stay useful.
+- Moving an existing host to S3 (the config does not reach the host by itself, see `docs/REVIEW.md` point 3): apply
+  Terraform, copy the new `stack/` files to `/opt/observability`, and on the host run
+  `docker compose down`, `docker volume rm observability_loki_data observability_tempo_data` (the old local history
+  is not readable from S3, so it is dropped; check the volume names with `docker volume ls`), then `./start.sh`.
 - CloudWatch alarms recover the instance on new hardware when its host fails and reboot it when the OS stops
   answering. Stopping it by hand is safe: a stopped instance triggers nothing, keeps its private IP and its disks, and
   the stack comes back by itself when you start it. EBS keeps billing while it is stopped.

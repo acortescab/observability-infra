@@ -12,7 +12,8 @@ Marca cada punto cuando esté corregido. La numeración coincide con la revisió
   - [x] Alarma `StatusCheckFailed_Instance` con acción `reboot`
   - [x] `stop_grace_period` de 60 s en Prometheus, Loki y Tempo
   - [x] Primer `terraform apply` y comprobación del disco de datos montado en `/var/lib/docker`, también tras un reinicio (verificado el 2026-10-13)
-  - [ ] (Más adelante) S3 como backend de Loki y Tempo / multi-AZ
+  - [x] S3 como backend de Loki y Tempo (bucket compartido con prefijos `loki/` y `tempo/`). Pendiente: `terraform apply`, copiar `stack/` al host, vaciar los volúmenes locales y verificar que ambos escriben en el bucket
+  - [ ] (Más adelante) multi-AZ
 - [ ] **3. Los cambios en `stack/` nunca llegan al host** (`ignore_changes = [ami, user_data]`). Falta un mecanismo de despliegue de config (SSM Association/Run Command desde S3, o pipeline).
 - [ ] **4. Sin alarmas ni meta-monitoreo.**
   - [ ] Alarmas de CloudWatch (CPU, estado de la instancia, disco, memoria)

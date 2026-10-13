@@ -13,6 +13,11 @@ output "otlp_endpoint" {
   value       = "http://${aws_instance.observability.private_ip}:4317"
 }
 
+output "telemetry_bucket" {
+  description = "S3 bucket of Loki (prefix loki/) and Tempo (prefix tempo/)"
+  value       = aws_s3_bucket.telemetry.id
+}
+
 output "security_group_id" {
   description = "Security group of the observability instance"
   value       = aws_security_group.observability.id

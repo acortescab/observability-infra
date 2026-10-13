@@ -10,16 +10,21 @@ common:
   ring:
     kvstore:
       store: inmemory
-  storage:
-    filesystem:
-      chunks_directory: /loki/chunks
-      rules_directory: /loki/rules
+
+# Chunks and index live in the shared telemetry bucket under loki/. The bucket and region come from the environment
+# (Loki runs with -config.expand-env=true); the credentials are the instance role's. The tsdb index in use and the
+# compactor's scratch space stay on the local volume.
+storage_config:
+  object_prefix: loki/
+  aws:
+    bucketnames: ${TELEMETRY_BUCKET}
+    region: ${AWS_REGION}
 
 schema_config:
   configs:
     - from: "2024-01-01"
       store: tsdb
-      object_store: filesystem
+      object_store: s3
       schema: v13
       index:
         prefix: index_
@@ -32,4 +37,4 @@ limits_config:
 compactor:
   working_directory: /loki/compactor
   retention_enabled: true
-  delete_request_store: filesystem
+  delete_request_store: s3

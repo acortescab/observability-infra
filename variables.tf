@@ -91,6 +91,23 @@ variable "snapshot_retention_days" {
   default     = 7
 }
 
+variable "telemetry_bucket_name" {
+  description = "Name of the S3 bucket shared by Loki (loki/) and Tempo (tempo/). Bucket names are unique across all AWS accounts: if the default is taken, set another one"
+  type        = string
+  default     = "observability-telemetry-s3"
+}
+
+variable "telemetry_expiration_days" {
+  description = "Days after which S3 deletes any object of the telemetry bucket. A safety net behind the 7-day retention of Loki and Tempo: keep it above that"
+  type        = number
+  default     = 14
+
+  validation {
+    condition     = var.telemetry_expiration_days >= 8
+    error_message = "telemetry_expiration_days must be at least 8: Loki and Tempo keep 7 days and need their objects until then."
+  }
+}
+
 variable "ami_architecture" {
   description = "Architecture for Ubuntu AMI lookup (x86_64 or arm64)"
   type        = string

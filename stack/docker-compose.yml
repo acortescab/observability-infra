@@ -26,7 +26,10 @@ services:
     restart: unless-stopped
     mem_limit: 768m
     stop_grace_period: 60s   # time to flush the WAL when the host is stopped
-    command: ["-config.file=/etc/tempo.yaml"]
+    command: ["-config.file=/etc/tempo.yaml", "-config.expand-env=true"]
+    environment:
+      TELEMETRY_BUCKET: ${TELEMETRY_BUCKET:?run ./start.sh}
+      AWS_REGION: ${AWS_REGION:?run ./start.sh}
     volumes:
       - ./tempo.yaml:/etc/tempo.yaml:ro
       - tempo_data:/var/tempo
@@ -37,7 +40,10 @@ services:
     restart: unless-stopped
     mem_limit: 768m
     stop_grace_period: 60s   # time to flush the WAL when the host is stopped
-    command: ["-config.file=/etc/loki/loki.yaml"]
+    command: ["-config.file=/etc/loki/loki.yaml", "-config.expand-env=true"]
+    environment:
+      TELEMETRY_BUCKET: ${TELEMETRY_BUCKET:?run ./start.sh}
+      AWS_REGION: ${AWS_REGION:?run ./start.sh}
     volumes:
       - ./loki.yaml:/etc/loki/loki.yaml:ro
       - loki_data:/loki
