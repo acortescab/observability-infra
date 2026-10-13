@@ -40,7 +40,22 @@ data "aws_iam_openid_connect_provider" "github" {
 }
 
 data "aws_iam_policy_document" "ci_assume_role" {
-  for_each = { plan = "plan", apply = "production" }
+  // plan: the PR plan of ci.yml (environment `plan`) and the plan job of cd.yml (push to main, no environment, so its
+  // subject is the branch ref). apply: only the apply job of cd.yml, after the approval of `production`. The apply role
+  // never trusts the branch ref: that would give it to any workflow run on main without the approval.
+  for_each = {
+    plan = {
+      subjects = [
+        "${var.github_oidc_subject}:environment:plan",
+        "${var.github_oidc_subject}:ref:refs/heads/main",
+      ]
+      pin_workflow = false
+    }
+    apply = {
+      subjects     = ["${var.github_oidc_subject}:environment:production"]
+      pin_workflow = true
+    }
+  }
 
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
@@ -56,12 +71,25 @@ data "aws_iam_policy_document" "ci_assume_role" {
       values   = ["sts.amazonaws.com"]
     }
 
-    // Only runs of the GitHub environment that matches the role: `plan` for pull requests, `production` (with
-    // required reviewers) for the apply.
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["${var.github_oidc_subject}:environment:${each.value}"]
+      values   = each.value.subjects
+    }
+
+    // The subject of an environment job carries no branch: without these two, the workflow of any branch that targets
+    // `production` would get the apply role once a reviewer approves it.
+    dynamic "condition" {
+      for_each = each.value.pin_workflow ? {
+        ref              = "refs/heads/main"
+        job_workflow_ref = "${var.github_repository}/.github/workflows/cd.yml@refs/heads/main"
+      } : {}
+
+      content {
+        test     = "StringEquals"
+        variable = "token.actions.githubusercontent.com:${condition.key}"
+        values   = [condition.value]
+      }
     }
   }
 }
@@ -303,12 +331,19 @@ resource "aws_iam_policy" "ci_boundary" {
 }
 
 // Plan role: read only. It sees the infrastructure and the state, never the Grafana password, and it cannot write
-// the state or its lock (the PR plan runs with -lock=false).
+// the state. It can only write the lock file, because the plan job of cd.yml takes the lock (the PR plan of ci.yml
+// runs with -lock=false).
 data "aws_iam_policy_document" "ci_plan" {
   statement {
     sid       = "TerraformStateRead"
     actions   = ["s3:GetObject"]
     resources = [local.tfstate_objects_arn]
+  }
+
+  statement {
+    sid       = "TerraformStateLock"
+    actions   = ["s3:PutObject", "s3:DeleteObject"]
+    resources = ["${local.tfstate_bucket_arn}/observability/*.tflock"]
   }
 
   statement {

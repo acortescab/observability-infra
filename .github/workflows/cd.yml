@@ -2,13 +2,23 @@ name: CD
 
 # Plans on every push to main (a merge) and applies after a manual approval (the `production` environment).
 # Needs, in the repository settings:
-#   - variable AWS_ROLE_ARN: IAM role GitHub assumes through OIDC (access to the state key and to these resources)
+#   - variable AWS_PLAN_ROLE_ARN: read-only IAM role (plus the state lock) for the plan job, via OIDC
+#   - variable AWS_ROLE_ARN: IAM role of the apply job, via OIDC (access to the state key and to these resources)
 #   - variables SUBNET_ID, ALLOWED_CLIENT_SECURITY_GROUP_IDS and OTLP_ENDPOINT_PARAMETERS: the values of
 #     terraform.tfvars (the last two as JSON lists, for example ["sg-0123"])
+#   - secret PLAN_ENCRYPTION_KEY: encrypts the plan artifact (the repository is public), `openssl rand -base64 32`
 #   - environment `production` with required reviewers
 on:
   push:
     branches: [main]
+    # Only what changes the infrastructure or the files stack/ delivers to the host. CI is not filtered: its checks
+    # are required in the branch protection.
+    paths:
+      - "*.tf"
+      - "*.sh"
+      - "stack/**"
+      - ".terraform.lock.hcl"
+      - ".github/workflows/cd.yml"
   workflow_dispatch:
 
 permissions:
@@ -50,9 +60,10 @@ jobs:
           terraform_version: "1.15.5"
           terraform_wrapper: false
 
+      # Plan role (it can write the state lock, not the state): the apply role is only for the approved apply job.
       - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
-          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Init
@@ -63,21 +74,47 @@ jobs:
         id: plan
         run: |
           set +e
-          terraform plan -detailed-exitcode -out=tfplan
+          terraform plan -input=false -no-color -lock-timeout=5m -detailed-exitcode -out=tfplan
           code=$?
           set -e
           echo "exitcode=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" -eq 1 ]; then exit 1; fi
 
+      # What the reviewer reads before approving. The summary is capped; the full plan is in the step log.
       - name: Plan summary
-        run: terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          terraform show -no-color tfplan > "$RUNNER_TEMP/plan.txt"
+          cat "$RUNNER_TEMP/plan.txt"
+          {
+            echo '### Terraform plan'
+            echo '```hcl'
+            head -c 60000 "$RUNNER_TEMP/plan.txt"
+            echo
+            echo '```'
+            if [ "$(wc -c < "$RUNNER_TEMP/plan.txt")" -gt 60000 ]; then
+              echo '_Plan truncated, see the step log for the full output._'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      # The plan can hold sensitive values: the artifact lives one day and only the apply job reads it.
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      # The repository is public and the artifact of a public repository can be downloaded by anyone, so the plan is
+      # encrypted. Create the secret once: `openssl rand -base64 32`.
+      - name: Encrypt the plan
+        if: steps.plan.outputs.exitcode == '2'
+        env:
+          PLAN_ENCRYPTION_KEY: ${{ secrets.PLAN_ENCRYPTION_KEY }}
+        run: |
+          if [ -z "$PLAN_ENCRYPTION_KEY" ]; then echo "Secret PLAN_ENCRYPTION_KEY is not set" >&2; exit 1; fi
+          openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:PLAN_ENCRYPTION_KEY -in tfplan -out tfplan.enc
+
+      # The artifact lives one day and only the apply job reads it.
+      - name: Upload the plan
+        if: steps.plan.outputs.exitcode == '2'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tfplan
-          path: tfplan
+          path: tfplan.enc
           retention-days: 1
+          if-no-files-found: error
 
   apply:
     name: Apply
@@ -113,9 +150,14 @@ jobs:
         with:
           name: tfplan
 
+      - name: Decrypt the plan
+        env:
+          PLAN_ENCRYPTION_KEY: ${{ secrets.PLAN_ENCRYPTION_KEY }}
+        run: openssl enc -d -aes-256-cbc -pbkdf2 -pass env:PLAN_ENCRYPTION_KEY -in tfplan.enc -out tfplan
+
       # Applies exactly the plan that was reviewed; Terraform refuses it if the state changed in between.
       - name: Apply
-        run: terraform apply tfplan
+        run: terraform apply -input=false -no-color -lock-timeout=5m tfplan
 
   # A failed plan or apply opens an issue, so it is not only an email to whoever pushed. Needs Issues enabled.
   notify-failure:

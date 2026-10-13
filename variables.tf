@@ -97,6 +97,12 @@ variable "github_oidc_subject" {
   default     = "repo:acortescab@289379741/observability-infra@1417502587"
 }
 
+variable "github_repository" {
+  description = "<owner>/<repo> of this repository, as in the job_workflow_ref claim of its OIDC tokens (plain names, no ids). The apply role only trusts the cd.yml of this repository on main"
+  type        = string
+  default     = "acortescab/observability-infra"
+}
+
 variable "tfstate_bucket" {
   description = "S3 bucket of the Terraform state (the one in versions.tf, which cannot use variables). The CI roles get access to the observability/ key prefix of it"
   type        = string
