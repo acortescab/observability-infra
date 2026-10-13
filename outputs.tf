@@ -13,6 +13,21 @@ output "otlp_endpoint" {
   value       = "http://${aws_instance.observability.private_ip}:4317"
 }
 
+output "telemetry_bucket" {
+  description = "S3 bucket of Loki (prefix loki/) and Tempo (prefix tempo/)"
+  value       = aws_s3_bucket.telemetry.id
+}
+
+output "ci_plan_role_arn" {
+  description = "Read-only role of the PR plan (repository variable AWS_PLAN_ROLE_ARN)"
+  value       = aws_iam_role.ci_plan.arn
+}
+
+output "ci_apply_role_arn" {
+  description = "Role of the approved apply (repository variable AWS_ROLE_ARN)"
+  value       = aws_iam_role.ci_apply.arn
+}
+
 output "security_group_id" {
   description = "Security group of the observability instance"
   value       = aws_security_group.observability.id

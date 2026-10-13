@@ -16,8 +16,13 @@ compactor:
 
 storage:
   trace:
-    backend: local
+    backend: s3
     wal:
-      path: /var/tempo/wal
-    local:
-      path: /var/tempo/blocks
+      path: /var/tempo/wal   # stays local: it holds the traces not yet flushed as blocks
+    # Blocks go to the shared telemetry bucket under tempo/. The bucket and region come from the environment (Tempo
+    # runs with -config.expand-env=true); the credentials are the instance role's.
+    s3:
+      bucket: ${TELEMETRY_BUCKET}
+      prefix: tempo
+      endpoint: s3.${AWS_REGION}.amazonaws.com
+      region: ${AWS_REGION}

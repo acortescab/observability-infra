@@ -1,0 +1,139 @@
+name: CD
+
+# Plans on every push to main (a merge) and applies after a manual approval (the `production` environment).
+# Needs, in the repository settings:
+#   - variable AWS_ROLE_ARN: IAM role GitHub assumes through OIDC (access to the state key and to these resources)
+#   - variables SUBNET_ID, ALLOWED_CLIENT_SECURITY_GROUP_IDS and OTLP_ENDPOINT_PARAMETERS: the values of
+#     terraform.tfvars (the last two as JSON lists, for example ["sg-0123"])
+#   - environment `production` with required reviewers
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run at a time: the state lock would make a second one fail anyway.
+concurrency:
+  group: cd
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-1
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write   # OIDC token for the AWS role
+    env:
+      TF_VAR_subnet_id: ${{ vars.SUBNET_ID }}
+      TF_VAR_allowed_client_security_group_ids: ${{ vars.ALLOWED_CLIENT_SECURITY_GROUP_IDS }}
+      TF_VAR_otlp_endpoint_parameters: ${{ vars.OTLP_ENDPOINT_PARAMETERS }}
+    outputs:
+      has_changes: ${{ steps.plan.outputs.exitcode == '2' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Same version as ci.yml, and the same in both jobs, so the plan the apply job receives was made by the
+      # Terraform that applies it.
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.15.5"
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Init
+        run: terraform init
+
+      # -detailed-exitcode: 0 = no changes, 2 = changes, 1 = error.
+      - name: Plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -detailed-exitcode -out=tfplan
+          code=$?
+          set -e
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -eq 1 ]; then exit 1; fi
+
+      - name: Plan summary
+        run: terraform show -no-color tfplan >> "$GITHUB_STEP_SUMMARY"
+
+      # The plan can hold sensitive values: the artifact lives one day and only the apply job reads it.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: tfplan
+          path: tfplan
+          retention-days: 1
+
+  apply:
+    name: Apply
+    needs: plan
+    if: needs.plan.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: read
+      id-token: write   # OIDC token for the AWS role
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Same version as ci.yml, and the same in both jobs, so the plan the apply job receives was made by the
+      # Terraform that applies it.
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.15.5"
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Init
+        run: terraform init
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: tfplan
+
+      # Applies exactly the plan that was reviewed; Terraform refuses it if the state changed in between.
+      - name: Apply
+        run: terraform apply tfplan
+
+  # A failed plan or apply opens an issue, so it is not only an email to whoever pushed. Needs Issues enabled.
+  notify-failure:
+    name: Open an issue on failure
+    needs: [plan, apply]
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create --repo "$REPO" \
+            --title "CD failed on ${SHA:0:7}" \
+            --body "The plan or apply of $SHA failed. Run: $RUN_URL"
