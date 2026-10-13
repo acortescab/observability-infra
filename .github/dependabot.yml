@@ -1,0 +1,19 @@
+version: 2
+
+updates:
+  # Keeps the pinned action SHAs of the workflows current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # Do not adopt a release in its first days: a compromised one is usually caught and pulled by then.
+    cooldown:
+      default-days: 7
+
+  # Keeps the lock file and the AWS provider constraint current.
+  - package-ecosystem: terraform
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

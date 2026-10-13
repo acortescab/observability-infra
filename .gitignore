@@ -14,5 +14,9 @@ override.tf.json
 .terraformrc
 terraform.rc
 
+# TFLint plugins downloaded by `tflint --init`
+.tflint.d/
+
 # Local editor/system files
 .DS_Store
+.venv/

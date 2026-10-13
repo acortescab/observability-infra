@@ -1,5 +1,5 @@
 
-# --- Observability stack (appended to user_data.sh) ---
+# --- Observability stack (appended to user_data.sh, and run again by the deploy_stack SSM document) ---
 # Installs the stack/ folder of this repository on the host and keeps the stack running with systemd, so a
 # fresh host comes up by itself. Nothing secret lives here: the Grafana password is read from SSM Parameter
 # Store by stack/start.sh with the instance role.
@@ -33,6 +33,32 @@ RestartSec=30
 [Install]
 WantedBy=multi-user.target
 UNIT
+
+# Docker only restarts a container that exits; this timer restarts the ones its healthchecks report as unhealthy.
+cat > /etc/systemd/system/observability-healthcheck.service <<'UNIT'
+[Unit]
+Description=Restart unhealthy containers of the observability stack
+After=docker.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/opt/observability/restart_unhealthy.sh
+UNIT
+cat > /etc/systemd/system/observability-healthcheck.timer <<'UNIT'
+[Unit]
+Description=Check the observability stack every minute
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+UNIT
+
 systemctl daemon-reload
 systemctl enable observability-stack.service
-systemctl start --no-block observability-stack.service
+systemctl enable --now observability-healthcheck.timer
+# restart, not start: on a redeploy the service is already active and must run start.sh again to apply the new files.
+systemctl restart --no-block observability-stack.service

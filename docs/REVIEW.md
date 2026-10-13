@@ -14,7 +14,7 @@ Marca cada punto cuando esté corregido. La numeración coincide con la revisió
   - [x] Primer `terraform apply` y comprobación del disco de datos montado en `/var/lib/docker`, también tras un reinicio (verificado el 2026-10-13)
   - [x] S3 como backend de Loki y Tempo (bucket compartido con prefijos `loki/` y `tempo/`). Pendiente: `terraform apply`, copiar `stack/` al host, vaciar los volúmenes locales y verificar que ambos escriben en el bucket
   - [ ] (Más adelante) multi-AZ
-- [ ] **3. Los cambios en `stack/` nunca llegan al host** (`ignore_changes = [ami, user_data]`). Falta un mecanismo de despliegue de config (SSM Association/Run Command desde S3, o pipeline).
+- [x] **3. Los cambios en `stack/` nunca llegan al host** (`ignore_changes = [ami, user_data]`). Resuelto con un documento SSM y una association (`deploy.tf`) que el `terraform apply` ejecuta en el host cuando cambian `stack/` o `bootstrap.sh`. Pendiente: verificarlo en el primer apply real.
 - [ ] **4. Sin alarmas ni meta-monitoreo.**
   - [ ] Alarmas de CloudWatch (CPU, estado de la instancia, disco, memoria)
   - [ ] node-exporter / cAdvisor
@@ -56,7 +56,7 @@ Marca cada punto cuando esté corregido. La numeración coincide con la revisió
 - [ ] **23. Variables sin validación:** `subnet_id`, `snapshot_retention_days`, `allowed_client_cidrs`, `ssm_prefix`.
 - [ ] **24. Higiene del repo:**
   - [ ] Primer commit (incluyendo `.terraform.lock.hcl`)
-  - [ ] CI con `terraform fmt` y `validate`
-  - [ ] `tflint` y `checkov`/`trivy`
+  - [x] CI con `terraform fmt` y `validate` (`.github/workflows/ci.yml`; `cd.yml` hace plan y apply con aprobación). `ci.yml` también comenta el plan en cada PR. Roles OIDC de plan y apply y boundary en `ci_roles.tf`. Pendiente: primer apply a mano, variables `AWS_ROLE_ARN` y `AWS_PLAN_ROLE_ARN`, secreto `TFVARS` y entornos `plan` y `production`
+  - [x] `tflint` y `trivy config` en `ci.yml` (Trivy solo informativo hasta revisar los hallazgos; sin `checkov`)
   - [ ] `pre-commit`
 - [ ] **25. Sin entorno de prueba ni `prevent_destroy`** en la instancia.

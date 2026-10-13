@@ -101,11 +101,8 @@ resource "aws_instance" "observability" {
       volume_id = replace(aws_ebs_volume.data.id, "-", "")
     }),
     file("${path.module}/user_data.sh"),
-    templatefile("${path.module}/bootstrap.sh", {
-      // gzip keeps user_data well under the 16 KB limit
-      files      = { for f in fileset("${path.module}/stack", "{docker-compose.yml,*.sh,*.yaml}") : f => base64gzip(file("${path.module}/stack/${f}")) }
-      ssm_prefix = var.ssm_prefix
-    }),
+    // Same script the deploy_stack SSM document runs (deploy.tf). gzip keeps user_data well under the 16 KB limit.
+    local.bootstrap,
   ])
 
   // The games only learn a new private IP on their next deploy: a newer AMI or an edited bootstrap must never
@@ -233,8 +230,9 @@ data "aws_iam_policy_document" "ec2_assume_role" {
 }
 
 resource "aws_iam_role" "observability" {
-  name               = "${local.name_prefix}-role"
-  assume_role_policy = data.aws_iam_policy_document.ec2_assume_role.json
+  name                 = "${local.name_prefix}-role"
+  assume_role_policy   = data.aws_iam_policy_document.ec2_assume_role.json
+  permissions_boundary = aws_iam_policy.ci_boundary.arn
 
   tags = merge(local.tags, { Name = "${local.name_prefix}-role" })
 }
@@ -301,8 +299,9 @@ data "aws_iam_policy_document" "dlm_assume_role" {
 }
 
 resource "aws_iam_role" "dlm" {
-  name               = "${local.name_prefix}-dlm-role"
-  assume_role_policy = data.aws_iam_policy_document.dlm_assume_role.json
+  name                 = "${local.name_prefix}-dlm-role"
+  assume_role_policy   = data.aws_iam_policy_document.dlm_assume_role.json
+  permissions_boundary = aws_iam_policy.ci_boundary.arn
 
   tags = merge(local.tags, { Name = "${local.name_prefix}-dlm-role" })
 }

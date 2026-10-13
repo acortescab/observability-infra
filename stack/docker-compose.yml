@@ -6,7 +6,15 @@ x-logging: &logging
     max-size: "10m"
     max-file: "3"
 
+# Docker only marks a failing container "unhealthy"; restart_unhealthy.sh (a systemd timer) restarts it.
+x-healthcheck: &healthcheck
+  interval: 30s
+  timeout: 5s
+  retries: 3
+  start_period: 60s   # Loki and Tempo answer 503 on /ready while they replay their WAL
+
 services:
+  # No healthcheck: the Collector image has no shell or wget to run one in. Docker's restart policy covers a crash.
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.111.0
     restart: unless-stopped
@@ -33,6 +41,9 @@ services:
     volumes:
       - ./tempo.yaml:/etc/tempo.yaml:ro
       - tempo_data:/var/tempo
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3200/ready"]
     logging: *logging
 
   loki:
@@ -47,6 +58,9 @@ services:
     volumes:
       - ./loki.yaml:/etc/loki/loki.yaml:ro
       - loki_data:/loki
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3100/ready"]
     logging: *logging
 
   prometheus:
@@ -64,6 +78,9 @@ services:
     ports:
       # Loopback only: queried on the host (SSM Run Command / port forwarding), never from the network.
       - "127.0.0.1:9090:9090"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9090/-/healthy"]
     logging: *logging
 
   grafana:
@@ -79,6 +96,9 @@ services:
     ports:
       # Loopback only: reach it with an SSM port-forwarding session (see the README).
       - "127.0.0.1:3000:3000"
+    healthcheck:
+      <<: *healthcheck
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/api/health"]
     depends_on: [tempo, loki, prometheus]
     logging: *logging
 

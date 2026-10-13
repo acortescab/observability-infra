@@ -91,6 +91,18 @@ variable "snapshot_retention_days" {
   default     = 7
 }
 
+variable "github_oidc_subject" {
+  description = "Prefix of the subject claim of this repository's GitHub OIDC tokens, in the format used by the account: repo:<owner>@<owner id>/<repo>@<repo id>. The CI roles append :environment:plan or :environment:production"
+  type        = string
+  default     = "repo:acortescab@289379741/observability-infra@1417502587"
+}
+
+variable "tfstate_bucket" {
+  description = "S3 bucket of the Terraform state (the one in versions.tf, which cannot use variables). The CI roles get access to the observability/ key prefix of it"
+  type        = string
+  default     = "coika-auth-tfstate-s3-290294660813-eu-west-1-an"
+}
+
 variable "telemetry_bucket_name" {
   description = "Name of the S3 bucket shared by Loki (loki/) and Tempo (tempo/). Bucket names are unique across all AWS accounts: if the default is taken, set another one"
   type        = string

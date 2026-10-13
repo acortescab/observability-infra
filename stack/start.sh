@@ -12,4 +12,5 @@ TELEMETRY_BUCKET="$(ssm_get TELEMETRY_BUCKET)"
 export GRAFANA_PASSWORD OBS_BIND_IP TELEMETRY_BUCKET AWS_REGION
 
 cd "$STACK_DIR"
-docker compose up -d
+# --force-recreate: the configs are bind-mounted files, which compose does not notice changing.
+docker compose up -d --force-recreate

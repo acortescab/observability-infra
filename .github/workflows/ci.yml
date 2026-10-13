@@ -1,0 +1,205 @@
+name: CI
+
+# Runs on pull requests only. After the merge, cd.yml takes over; to keep main safe, require these checks in the
+# branch protection rules of main instead of re-running them on the push.
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  terraform:
+    name: Terraform fmt and validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.15.5"
+
+      - name: Format
+        run: terraform fmt -check -recursive -diff
+
+      # No backend and no AWS credentials: validate only needs the provider schema.
+      - name: Init
+        run: terraform init -backend=false -input=false
+
+      - name: Validate
+        run: terraform validate
+
+  # Errors and bad practice that `terraform validate` accepts (rules in .tflint.hcl). Fails the check on any finding.
+  tflint:
+    name: TFLint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: v0.64.0
+
+      # The token only lifts the GitHub API rate limit when tflint downloads the AWS ruleset plugin.
+      - name: Init
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: tflint --init
+
+      - name: Lint
+        run: tflint --format compact
+
+  # Security misconfiguration of the Terraform resources (unencrypted storage, open security groups, ...).
+  # Report only for now: exit-code "0" never fails the check. Once the findings are fixed or accepted with an inline
+  # `#trivy:ignore:<id>`, set it to "1" and make the check required in the branch protection of main.
+  trivy:
+    name: Trivy config
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          format: table
+          exit-code: "0"
+          skip-dirs: .terraform
+
+  # Shows what the merge would change. Needs, in the repository settings:
+  #   - variable AWS_PLAN_ROLE_ARN: a read-only IAM role for OIDC (state read plus Describe/Get/List on the resources)
+  #     whose trust policy only accepts the subject of the `plan` environment, never the apply role
+  #   - environment `plan` (no reviewers): it puts `environment:plan` in the OIDC subject, the same convention as the
+  #     other stacks' plan roles
+  #   - secret TFVARS: the contents of terraform.tfvars (it is git-ignored)
+  # Skipped for forks and Dependabot, which get neither secrets nor OIDC.
+  plan:
+    name: Terraform plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]'
+    environment: plan
+    permissions:
+      contents: read
+      id-token: write        # OIDC token for the AWS role
+      pull-requests: write   # the plan comment
+    env:
+      AWS_REGION: eu-west-1
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: "1.15.5"
+          terraform_wrapper: false
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Write terraform.tfvars
+        env:
+          TFVARS: ${{ secrets.TFVARS }}
+        run: printf '%s\n' "$TFVARS" > terraform.tfvars
+
+      - name: Init
+        run: terraform init
+
+      # -lock=false: the read-only role cannot write the state lock, and a PR plan must never block an apply.
+      # -detailed-exitcode: 0 = no changes, 2 = changes, 1 = error.
+      - name: Plan
+        id: plan
+        run: |
+          set +e
+          terraform plan -no-color -lock=false -detailed-exitcode > plan.txt 2>&1
+          code=$?
+          set -e
+          cat plan.txt
+          echo "exitcode=$code" >> "$GITHUB_OUTPUT"
+          if [ "$code" -eq 1 ]; then exit 1; fi
+
+      # One comment per PR, updated on each push. GitHub caps a comment at 65536 characters.
+      - name: Comment the plan on the PR
+        if: ${{ !cancelled() && steps.plan.outcome != 'skipped' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          EXITCODE: ${{ steps.plan.outputs.exitcode }}
+        run: |
+          marker='<!-- terraform-plan -->'
+          case "$EXITCODE" in
+            0) status='No changes.' ;;
+            2) status='Changes to apply after the merge.' ;;
+            *) status='The plan failed.' ;;
+          esac
+          {
+            echo "$marker"
+            echo "### Terraform plan: $status"
+            echo
+            echo '```'
+            if [ -f plan.txt ]; then head -c 60000 plan.txt; else echo 'No plan output (see the run log).'; fi
+            echo
+            echo '```'
+          } > body.md
+          id="$(gh api --paginate "repos/$REPO/issues/$PR/comments" \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -n1)"
+          if [ -n "$id" ]; then
+            gh api --method PATCH "repos/$REPO/issues/comments/$id" -F body=@body.md > /dev/null
+          else
+            gh api --method POST "repos/$REPO/issues/$PR/comments" -F body=@body.md > /dev/null
+          fi
+
+  shellcheck:
+    name: Shellcheck stack scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Only stack/*.sh: bootstrap.sh, user_data.sh and data_disk.sh are Terraform templates, not plain shell.
+      - name: Shellcheck
+        run: shellcheck stack/*.sh
+
+  # Syntax and expression errors of the workflows (actionlint) and security problems in them: template injection,
+  # excessive permissions, unpinned actions (zizmor). Both fail the check on any finding.
+  workflows:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # The download script is pinned to the commit of the release it installs.
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/914e7df21a07ef503a81201c76d2b11c789d3fca/scripts/download-actionlint.bash) 1.7.12
+          ./actionlint -color
+
+      - uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          advanced-security: false
