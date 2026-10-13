@@ -7,7 +7,7 @@ Guía de los workflows de este repositorio (`.github/workflows/ci.yml`, `.github
 | Workflow | Cuándo corre | Qué hace | Credenciales de AWS |
 |---|---|---|---|
 | `ci.yml` | `pull_request` hacia `main` | `terraform fmt`, `validate`, `shellcheck` y plan comentado en el PR | Rol de solo lectura (`AWS_PLAN_ROLE_ARN`), solo el job de plan |
-| `cd.yml` | `push` a `main` y `workflow_dispatch` | Plan y, tras aprobación manual, apply del mismo plan | Rol de apply (`AWS_ROLE_ARN`) |
+| `cd.yml` | `push` a `main` y `workflow_dispatch` | Plan y, tras aprobación manual, apply del mismo plan | Plan: rol de plan (`AWS_PLAN_ROLE_ARN`). Apply: rol de apply (`AWS_ROLE_ARN`), solo tras aprobar `production` |
 
 Los puntos que siguen sin marcar no se pueden resolver con código de este repo: son ajustes de GitHub o de AWS, o hábitos de revisión.
 
@@ -27,8 +27,8 @@ Los puntos que siguen sin marcar no se pueden resolver con código de este repo:
 - [x] **Los valores de `terraform.tfvars` en variables de GitHub, una por valor** (`SUBNET_ID`, `ALLOWED_CLIENT_SECURITY_GROUP_IDS`, `OTLP_ENDPOINT_PARAMETERS`), que los workflows pasan a Terraform como `TF_VAR_<nombre>`. No son secretos (ids de subred y de security groups), así que no se escribe ningún archivo en el runner. El `terraform.tfvars` local sigue en `.gitignore`. Si añades un valor a tu `terraform.tfvars`, añade también su variable y su `TF_VAR_` en los dos workflows.
 - [x] **Los secretos pasan por `env:`**, nunca interpolados directamente en el script (`run: printf ... ${{ secrets.X }}`). Así no se pueden inyectar comandos ni aparecer en el log expandidos.
 - [x] **Política de confianza acotada** por repositorio y entorno (`ci_roles.tf`, variable `github_oidc_subject`). Campo `sub` del token OIDC:
-  - Plan: `repo:<owner>/<repo>:environment:plan`
-  - Apply: `repo:<owner>/<repo>:environment:production`
+  - Plan: `repo:<owner>/<repo>:environment:plan` (plan de los PR) y `repo:<owner>/<repo>:ref:refs/heads/main` (el job de plan de `cd.yml`, que corre en `main` sin entorno)
+  - Apply: solo `repo:<owner>/<repo>:environment:production`, más las condiciones `ref = refs/heads/main` y `job_workflow_ref = <owner>/<repo>/.github/workflows/cd.yml@refs/heads/main`. El `sub` de un job con entorno no lleva rama; sin esas dos condiciones, el workflow de cualquier rama que apunte a `production` obtendría el rol una vez aprobado. El rol de apply nunca confía en la rama `main` a secas: eso lo daría a cualquier workflow sin aprobación.
 
   Es la convención de los roles de los otros stacks de la cuenta (por ejemplo `coika-auth_service-infra-ci_plan-role`). En esta cuenta el `sub` lleva además los ids del propietario y del repo (`repo:acortescab@289379741/<repo>@<id>:environment:plan`).
 
@@ -53,7 +53,8 @@ Los puntos que siguen sin marcar no se pueden resolver con código de este repo:
 - [x] **Plan y apply separados.** El job `plan` guarda el plan con `-out=tfplan` y el job `apply` aplica exactamente ese fichero. Terraform rechaza el plan si el state cambió entre medias.
 - [x] **Aprobación manual** con el entorno `production` (revisores obligatorios) antes del apply.
 - [x] **El apply solo corre si hay cambios** (`terraform plan -detailed-exitcode`: 0 sin cambios, 2 con cambios, 1 error).
-- [x] **El plan guardado dura un día** (`retention-days: 1`) y solo lo lee el job de apply, porque puede contener valores sensibles.
+- [x] **El plan guardado dura un día** (`retention-days: 1`) y solo lo lee el job de apply, porque puede contener valores sensibles. El repositorio es público y los artefactos de un repo público los puede descargar cualquiera, así que el plan se cifra (`openssl enc -aes-256-cbc -pbkdf2`) con el secreto `PLAN_ENCRYPTION_KEY` (`openssl rand -base64 32`) y el job de apply lo descifra. Si el secreto falta, el job de plan falla.
+- [x] **CD solo corre si cambia infraestructura** (`paths:` en el `push`: `*.tf`, `*.sh`, `stack/**`, el lock file y su propio workflow). CI no filtra por rutas: sus checks son obligatorios en `main`.
 - [x] **`TF_IN_AUTOMATION` y `TF_INPUT=false`:** Terraform no pregunta nada y ajusta su salida para CI.
 - [x] **State con bloqueo.** El backend S3 usa `use_lockfile = true`. El plan de los PR usa `-lock=false` porque su rol no puede escribir el `.tflock` y un plan de revisión nunca debe bloquear un apply.
 - [ ] **Entorno `production` con "Prevent self-review"** (el autor del merge no aprueba su propio despliegue), si hay más de una persona.
@@ -92,7 +93,7 @@ Lo que el código no puede hacer por sí solo y hay que crear en GitHub y en AWS
 **En AWS** (IAM). Todo está en `ci_roles.tf`; el proveedor OIDC de GitHub ya existe en la cuenta y se referencia con un `data`, no se crea.
 
 1. Rol de **apply** (`observability-ci_apply-role`): confianza limitada a `...:environment:production`. Permisos sobre la clave `observability/*` del bucket de state (incluido el `.tflock`) y sobre los recursos del stack: EC2, EBS, los roles y el perfil del host, el bucket de telemetría, dos tipos de parámetros SSM (`TELEMETRY_BUCKET` y los `otlp_endpoint_parameters`), DLM y las alarmas de CloudWatch. No puede tocar sus propios roles ni el boundary.
-2. Rol de **plan** (`observability-ci_plan-role`): confianza limitada a `...:environment:plan`. Solo lectura de esos mismos recursos y del state. No escribe el state ni el `.tflock`, y no lee `GRAFANA_PASSWORD`, porque el plan ejecuta código del PR.
+2. Rol de **plan** (`observability-ci_plan-role`): confianza limitada a `...:environment:plan` y `...:ref:refs/heads/main`. Solo lectura de esos mismos recursos y del state. No escribe el state; solo puede escribir el `.tflock` (el plan de `cd.yml` toma el lock; el de los PR usa `-lock=false`). No lee `GRAFANA_PASSWORD`, porque el plan ejecuta código del PR.
 3. **Boundary** (`observability-ci-boundary`) en los dos roles de CI y en los dos roles del host (instancia y DLM). Prohíbe crear roles sin boundary, quitárselo o editarlo.
 4. **Primer apply a mano** desde una estación de trabajo, porque el pipeline necesita que los roles existan. Después, los ARN salen en los outputs `ci_plan_role_arn` y `ci_apply_role_arn`, que van a las variables `AWS_PLAN_ROLE_ARN` y `AWS_ROLE_ARN` de GitHub. Los cambios en `ci_roles.tf` se aplican a mano, porque el rol de apply no puede modificarse a sí mismo.
 
