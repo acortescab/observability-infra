@@ -25,7 +25,8 @@ locals {
     [for name in var.otlp_endpoint_parameters : "arn:aws:ssm:${var.aws_region}:${local.account_id}:parameter${name}"],
   )
 
-  ci_ssm_document_arn = "arn:aws:ssm:${var.aws_region}:${local.account_id}:document/${local.name_prefix}-deploy-stack"
+  ci_ssm_document_arn    = "arn:aws:ssm:${var.aws_region}:${local.account_id}:document/${local.name_prefix}-deploy-stack"
+  ci_ssm_association_arn = "arn:aws:ssm:${var.aws_region}:${local.account_id}:association/*"
 
   // Roles and instance profile of the host. The CI roles are not in this list, so they cannot change themselves.
   host_role_arns = [
@@ -150,7 +151,14 @@ data "aws_iam_policy_document" "ci_apply" {
   statement {
     sid       = "SsmDeployAssociation"
     actions   = ["ssm:CreateAssociation", "ssm:UpdateAssociation", "ssm:DeleteAssociation"]
-    resources = [local.ci_ssm_document_arn, "arn:aws:ssm:${var.aws_region}:${local.account_id}:association/*", "arn:aws:ec2:${var.aws_region}:${local.account_id}:instance/*"]
+    resources = [local.ci_ssm_document_arn, local.ci_ssm_association_arn, "arn:aws:ec2:${var.aws_region}:${local.account_id}:instance/*"]
+  }
+
+  // The provider reads and writes the tags of the association (the document has its own statement above).
+  statement {
+    sid       = "SsmAssociationTags"
+    actions   = ["ssm:AddTagsToResource", "ssm:RemoveTagsFromResource", "ssm:ListTagsForResource"]
+    resources = [local.ci_ssm_association_arn]
   }
 
   statement {
@@ -361,6 +369,12 @@ data "aws_iam_policy_document" "ci_plan" {
       "ssm:ListAssociations",
     ]
     resources = ["*"]
+  }
+
+  statement {
+    sid       = "SsmAssociationTagsRead"
+    actions   = ["ssm:ListTagsForResource"]
+    resources = [local.ci_ssm_association_arn]
   }
 
   statement {
