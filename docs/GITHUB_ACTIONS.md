@@ -24,7 +24,7 @@ Los puntos que siguen sin marcar no se pueden resolver con código de este repo:
 - [x] **OIDC en lugar de claves de acceso.** No hay `AWS_ACCESS_KEY_ID` ni `AWS_SECRET_ACCESS_KEY` guardadas en GitHub. `aws-actions/configure-aws-credentials` obtiene credenciales temporales por ejecución.
 - [x] **Dos roles distintos.** El plan de los PR usa un rol de solo lectura; el apply usa otro con permisos de escritura. Un PR nunca puede asumir el rol de apply.
 - [x] **`persist-credentials: false`** en todos los `actions/checkout`, para que el token de Git no quede en `.git/config` del runner.
-- [x] **`terraform.tfvars` en un secreto (`TFVARS`)**, escrito al disco del runner solo durante la ejecución. El archivo está en `.gitignore`.
+- [x] **Los valores de `terraform.tfvars` en variables de GitHub, una por valor** (`SUBNET_ID`, `ALLOWED_CLIENT_SECURITY_GROUP_IDS`, `OTLP_ENDPOINT_PARAMETERS`), que los workflows pasan a Terraform como `TF_VAR_<nombre>`. No son secretos (ids de subred y de security groups), así que no se escribe ningún archivo en el runner. El `terraform.tfvars` local sigue en `.gitignore`. Si añades un valor a tu `terraform.tfvars`, añade también su variable y su `TF_VAR_` en los dos workflows.
 - [x] **Los secretos pasan por `env:`**, nunca interpolados directamente en el script (`run: printf ... ${{ secrets.X }}`). Así no se pueden inyectar comandos ni aparecer en el log expandidos.
 - [x] **Política de confianza acotada** por repositorio y entorno (`ci_roles.tf`, variable `github_oidc_subject`). Campo `sub` del token OIDC:
   - Plan: `repo:<owner>/<repo>:environment:plan`
@@ -78,7 +78,10 @@ Lo que el código no puede hacer por sí solo y hay que crear en GitHub y en AWS
 1. **Variables** (Settings > Secrets and variables > Actions > Variables):
    - `AWS_ROLE_ARN`: rol de apply (usado por `cd.yml`).
    - `AWS_PLAN_ROLE_ARN`: rol de solo lectura (usado por el plan de `ci.yml`).
-2. **Secreto** `TFVARS`: el contenido de `terraform.tfvars`.
+2. **Variables con los valores de `terraform.tfvars`** (mismo sitio que las anteriores):
+   - `SUBNET_ID`: el id tal cual, sin comillas (`subnet-0123456789abcdef0`).
+   - `ALLOWED_CLIENT_SECURITY_GROUP_IDS`: lista JSON (`["sg-0123456789abcdef0"]`). Si no hay ninguno, `[]`: vacía hace fallar el plan.
+   - `OTLP_ENDPOINT_PARAMETERS`: lista JSON (`["/coika/auth_service/app/OTEL_EXPORTER_OTLP_ENDPOINT"]`), o `[]`.
 3. **Entornos:** `production` con revisores obligatorios (apply) y `plan` sin revisores (plan de los PR; solo sirve para que el token OIDC lleve `environment:plan`).
 4. **Protección de la rama `main`** (Settings > Branches):
    - Exigir pull request antes de fusionar.

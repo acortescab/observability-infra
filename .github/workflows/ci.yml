@@ -86,7 +86,8 @@ jobs:
   #     whose trust policy only accepts the subject of the `plan` environment, never the apply role
   #   - environment `plan` (no reviewers): it puts `environment:plan` in the OIDC subject, the same convention as the
   #     other stacks' plan roles
-  #   - secret TFVARS: the contents of terraform.tfvars (it is git-ignored)
+  #   - variables SUBNET_ID, ALLOWED_CLIENT_SECURITY_GROUP_IDS and OTLP_ENDPOINT_PARAMETERS: the values of
+  #     terraform.tfvars (the last two as JSON lists, for example ["sg-0123"])
   # Skipped for forks and Dependabot, which get neither secrets nor OIDC.
   plan:
     name: Terraform plan
@@ -102,6 +103,10 @@ jobs:
       AWS_REGION: eu-west-1
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
+      # The values of terraform.tfvars, one repository variable each (Terraform reads TF_VAR_<name>).
+      TF_VAR_subnet_id: ${{ vars.SUBNET_ID }}
+      TF_VAR_allowed_client_security_group_ids: ${{ vars.ALLOWED_CLIENT_SECURITY_GROUP_IDS }}
+      TF_VAR_otlp_endpoint_parameters: ${{ vars.OTLP_ENDPOINT_PARAMETERS }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -116,11 +121,6 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Write terraform.tfvars
-        env:
-          TFVARS: ${{ secrets.TFVARS }}
-        run: printf '%s\n' "$TFVARS" > terraform.tfvars
 
       - name: Init
         run: terraform init

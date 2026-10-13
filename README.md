@@ -23,9 +23,9 @@ Terraform for one shared observability host (prod only). Every game sends OpenTe
 
 - Terraform >= 1.10.0 and AWS credentials. `.github/workflows/ci.yml` checks format, validity and the stack scripts on
   every pull request and comments the Terraform plan on it (needs the variable `AWS_PLAN_ROLE_ARN`, a read-only OIDC
-  role separate from the apply one, and the secret `TFVARS`). `cd.yml` plans on every push to `main` and applies after approval in the `production`
+  role separate from the apply one, and the variables `SUBNET_ID`, `ALLOWED_CLIENT_SECURITY_GROUP_IDS` and `OTLP_ENDPOINT_PARAMETERS`). `cd.yml` plans on every push to `main` and applies after approval in the `production`
   environment; it needs the repository variable `AWS_ROLE_ARN` (an OIDC role for this state key and these resources;
-  the other stack's CI roles do not cover them), the secret `TFVARS` (the contents of `terraform.tfvars`) and the
+  the other stack's CI roles do not cover them), the same three variables (the values of `terraform.tfvars`) and the
   environment with required reviewers. Until the role exists, apply from a workstation. The apply also delivers `stack/` to the
   host (see Operations).
 - A private subnet with outbound internet (NAT) in the VPC of the games. The `private_subnet_id` and `security_group_id`

@@ -56,7 +56,7 @@ Marca cada punto cuando esté corregido. La numeración coincide con la revisió
 - [ ] **23. Variables sin validación:** `subnet_id`, `snapshot_retention_days`, `allowed_client_cidrs`, `ssm_prefix`.
 - [ ] **24. Higiene del repo:**
   - [ ] Primer commit (incluyendo `.terraform.lock.hcl`)
-  - [x] CI con `terraform fmt` y `validate` (`.github/workflows/ci.yml`; `cd.yml` hace plan y apply con aprobación). `ci.yml` también comenta el plan en cada PR. Roles OIDC de plan y apply y boundary en `ci_roles.tf`. Pendiente: primer apply a mano, variables `AWS_ROLE_ARN` y `AWS_PLAN_ROLE_ARN`, secreto `TFVARS` y entornos `plan` y `production`
+  - [x] CI con `terraform fmt` y `validate` (`.github/workflows/ci.yml`; `cd.yml` hace plan y apply con aprobación). `ci.yml` también comenta el plan en cada PR. Roles OIDC de plan y apply y boundary en `ci_roles.tf`. Pendiente: primer apply a mano, variables `AWS_ROLE_ARN` y `AWS_PLAN_ROLE_ARN`, variables `SUBNET_ID`, `ALLOWED_CLIENT_SECURITY_GROUP_IDS` y `OTLP_ENDPOINT_PARAMETERS` y entornos `plan` y `production`
   - [x] `tflint` y `trivy config` en `ci.yml` (Trivy solo informativo hasta revisar los hallazgos; sin `checkov`)
   - [ ] `pre-commit`
 - [ ] **25. Sin entorno de prueba ni `prevent_destroy`** en la instancia.

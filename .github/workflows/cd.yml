@@ -3,7 +3,8 @@ name: CD
 # Plans on every push to main (a merge) and applies after a manual approval (the `production` environment).
 # Needs, in the repository settings:
 #   - variable AWS_ROLE_ARN: IAM role GitHub assumes through OIDC (access to the state key and to these resources)
-#   - secret TFVARS: the contents of terraform.tfvars (it is git-ignored)
+#   - variables SUBNET_ID, ALLOWED_CLIENT_SECURITY_GROUP_IDS and OTLP_ENDPOINT_PARAMETERS: the values of
+#     terraform.tfvars (the last two as JSON lists, for example ["sg-0123"])
 #   - environment `production` with required reviewers
 on:
   push:
@@ -31,6 +32,10 @@ jobs:
     permissions:
       contents: read
       id-token: write   # OIDC token for the AWS role
+    env:
+      TF_VAR_subnet_id: ${{ vars.SUBNET_ID }}
+      TF_VAR_allowed_client_security_group_ids: ${{ vars.ALLOWED_CLIENT_SECURITY_GROUP_IDS }}
+      TF_VAR_otlp_endpoint_parameters: ${{ vars.OTLP_ENDPOINT_PARAMETERS }}
     outputs:
       has_changes: ${{ steps.plan.outputs.exitcode == '2' }}
     steps:
@@ -49,11 +54,6 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Write terraform.tfvars
-        env:
-          TFVARS: ${{ secrets.TFVARS }}
-        run: printf '%s\n' "$TFVARS" > terraform.tfvars
 
       - name: Init
         run: terraform init
@@ -105,11 +105,6 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-
-      - name: Write terraform.tfvars
-        env:
-          TFVARS: ${{ secrets.TFVARS }}
-        run: printf '%s\n' "$TFVARS" > terraform.tfvars
 
       - name: Init
         run: terraform init
